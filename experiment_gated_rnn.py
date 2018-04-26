@@ -1,7 +1,5 @@
 import sys
-sys.path.append('../utils')
-# sys.path.append('../dataset0')
-sys.path.append('../dataset')
+sys.path.append('utils')
 import os
 import argparse
 from tqdm import tqdm
@@ -12,13 +10,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# from spot import DailyDataset, TOTAL_STD
-from data_loader import PeriodDataset
-from tool import to_var
-# from gated_model import GatedRNN as Model
-from basic_model import BasicRNN as Model
+# from dataset0.spot import DailyDataset, TOTAL_STD
+from dataset.data_loader import PeriodDataset
+from utils.tool import to_gpu
+# from utils.gated_model import GatedRNN as Model
+from utils.basic_model import BasicRNN as Model
+
+
 
 TOTAL_STD = 1
+
 
 
 def get_args():
@@ -60,16 +61,16 @@ if __name__ == '__main__':
     # testX, testY = loader.dataset.get_io('2012-01-01', '2016-06-30')
     trainX, trainY = loader.dataset.get_io('1977-01-01', '2012-12-31')
     testX, testY = loader.dataset.get_io('2012-01-01', '2017-12-31')
-    train_period_input = to_var(trainX, volatile=True)
-    train_period_output = to_var(trainY, volatile=True) * TOTAL_STD
-    test_period_input = to_var(testX, volatile=True)
+    train_period_input = to_gpu(trainX)
+    train_period_output = to_gpu(trainY) * TOTAL_STD
+    test_period_input = to_gpu(testX)
     # add one more day
     # self_test_input = test_period_input[:train_period_input.size()[0] + 1]
-    test_period_output = to_var(testY[-TEST_LENGTH:], volatile=True) * TOTAL_STD
+    test_period_output = to_gpu(testY[-TEST_LENGTH:]) * TOTAL_STD
     # print(train_period_input.shape, train_period_output.shape)
     # print(test_period_input.shape, test_period_output.shape, self_test_input.shape)
-    model = Model(seq_dim=args.seq_dim, hidden_size=args.hidden_size)
-    model = model.cuda()
+    model = to_gpu(Model(seq_dim=args.seq_dim, hidden_size=args.hidden_size))
+    # model = model.cuda()
     criterion = nn.MSELoss()
     metric = nn.L1Loss()
     optimizer = optim.RMSprop(model.parameters(), lr=0.001)
@@ -86,28 +87,29 @@ if __name__ == '__main__':
         test_mse = criterion(test_period_forecast, test_period_output)**.5
         test_mae = metric(test_period_forecast, test_period_output)
 
-        # self_test_forecast = model.self_forecast(self_test_input, to_var(testY, volatile=True) * TOTAL_STD, step=TEST_LENGTH) * TOTAL_STD
+        # self_test_forecast = model.self_forecast(self_test_input, to_gpu(testY) * TOTAL_STD, step=TEST_LENGTH) * TOTAL_STD
         # print(self_test_forecast.shape)
         # self_test_mse = criterion(self_test_forecast, test_period_output)**.5
         # self_test_mae = metric(self_test_forecast, test_period_output)
 
-        writer.add_scalar('train_mse', train_mse.data[0], global_step=epoch)
-        writer.add_scalar('train_mae', train_mae.data[0], global_step=epoch)
-        writer.add_scalar('test_mse', test_mse.data[0], global_step=epoch)
-        writer.add_scalar('test_mae', test_mae.data[0], global_step=epoch)
-        # writer.add_scalar('self_test_mse', self_test_mse.data[0], global_step=epoch)
-        # writer.add_scalar('self_test_mae', self_test_mae.data[0], global_step=epoch)
+        writer.add_scalar('train_mse', train_mse.data, global_step=epoch)
+        writer.add_scalar('train_mae', train_mae.data, global_step=epoch)
+        writer.add_scalar('test_mse', test_mse.data, global_step=epoch)
+        writer.add_scalar('test_mae', test_mae.data, global_step=epoch)
+        # writer.add_scalar('self_test_mse', self_test_mse.data, global_step=epoch)
+        # writer.add_scalar('self_test_mae', self_test_mae.data, global_step=epoch)
 
         for _, (x, y, item) in enumerate(loader):
-            x = to_var(x, requires_grad=False)
-            y = to_var(y, requires_grad=False)
-            # idx = to_var(item, requires_grad=False)
+            with torch.no_grad():
+                x = to_gpu(x)
+                y = to_gpu(y)
+
             optimizer.zero_grad()
 
             out = model(x)
             loss = criterion(out, y)
             writer.add_scalar('train_loss',
-                              loss.data[0], global_step=global_step)
+                              loss.data, global_step=global_step)
             loss.backward(retain_graph=True)
             # clip_grads(model)
             optimizer.step()

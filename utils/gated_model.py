@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable, Function
 import torch.optim as optim
-from tool import to_var
+from tool import to_gpu
 import numpy as np
 
 
@@ -17,7 +17,7 @@ class BinaryFunction(Function):
     @staticmethod
     def backward(ctx, grad_output):
         input = ctx.saved_variables[0]
-        grad_input = to_var(torch.ones_like(input.data))
+        grad_input = to_gpu(torch.ones_like(input.data))
         return grad_input
 
 class GatedRNN(nn.Module):
@@ -32,10 +32,10 @@ class GatedRNN(nn.Module):
         self.binary = BinaryFunction.apply
 
     def init_hidden_state(self):
-        return to_var(torch.zeros(1, self.hidden_size))
+        return to_gpu(torch.zeros(1, self.hidden_size))
 
     def init_gate_state(self):
-        return to_var(torch.ones(1, 1))
+        return to_gpu(torch.ones(1, 1))
 
     def get_deviation(self, y, y_pred):
         assert y.dim() == y_pred.dim()

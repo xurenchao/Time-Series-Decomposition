@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.optim as optim
-from tool import to_var
+from tool import to_gpu
 
 
 class BasicRNN(nn.Module):  # without state smooth
@@ -16,7 +16,7 @@ class BasicRNN(nn.Module):  # without state smooth
         self.fc3 = nn.Linear(hidden_size, seq_dim)
 
     def init_hidden_state(self):
-        return to_var(torch.zeros(1, self.hidden_size))
+        return to_gpu(torch.zeros(1, self.hidden_size))
 
     def forward(self, x):
         hidden = self.init_hidden_state()
@@ -56,7 +56,7 @@ class RNNwss(nn.Module):  # with state smooth
 
     def address_state(self, idx):
         h_t = self.cached_state.index_select(dim=0, index=idx.data)
-        return to_var(h_t)
+        return to_gpu(h_t)
 
     def update_state(self, idx, h_t):
         momentum = self.state_momentum
