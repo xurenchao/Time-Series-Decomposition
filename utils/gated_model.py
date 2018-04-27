@@ -70,40 +70,26 @@ class GatedRNN(nn.Module):
     def forecast(self, x):
         x = x.unsqueeze(0)  # non-batch
         hidden = self.init_hidden_state()
-        u = self.init_gate_state()
         outputs = []
-        xlist = x.split(1, dim=1)
-        l = len(xlist)
-        idx = 0
-        for input_t in xlist:
-            hidden = u * F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden)) + (1 - u) * hidden
+        for input_t in x.split(1, dim=1):
+            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
             output = self.fc3(hidden)
             outputs += [output]
-
-            idx += 1
-            if idx < l:
-                u = self.get_gate_state(xlist[idx].squeeze(1), output)
 
         outputs = torch.stack(outputs, 1).squeeze(2)  # 不理解
         return outputs[0]
 
-    # def self_forecast(self, x, y, step):
-    #     x = x.unsqueeze(0)  # non-batch
-    #     y = y.unsqueeze(0)
-    #     hidden = self.init_hidden_state()
-    #     u = self.init_gate_state()
-    #     outputs = []
-    #     xlist = x.split(1, dim=1)
-    #     ylist = y.split(1, dim=1)
-    #     idx=0
-    #     for input_t in xlist:
-    #         output, hidden = self.rnn(input_t.squeeze(dim=1), hidden, u)
-    #         u = self.get_gate_state(ylist[idx].squeeze(dim=1), output)
-    #         idx += 1
-    #     for i in range(step - 1):  # if we should predict the future
-    #         output, hidden = self.rnn(output, hidden, u)
-    #         u = self.get_gate_state(ylist[idx].squeeze(dim=1), output)
-    #         outputs += [output.squeeze(1)]
-    #         idx += 1
-    #     outputs = torch.stack(outputs, 1).squeeze(2)
-    #     return outputs[0]
+    def self_forecast(self, x, step):
+        x = x.unsqueeze(0)  # non-batch
+        hidden = self.init_hidden_state()
+        outputs = []
+        for input_t in x.split(1, dim=1):
+            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
+            output = self.fc3(hidden)
+        outputs += [output]
+        for i in range(step - 1):  # if we should predict the future
+            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
+            output = self.fc3(hidden)
+            outputs += [output]
+        outputs = torch.stack(outputs, 1).squeeze(2)
+        return outputs[0]

@@ -28,7 +28,7 @@ def get_year_spot(data=SPOT):
 
 
 class PeriodDataset(Dataset):
-    def __init__(self, end='2017-12-01', N=39, W=2):
+    def __init__(self, end='2012-12-31', N=34, W=2):
         self.end = end
         self.N = N
         self.W = W

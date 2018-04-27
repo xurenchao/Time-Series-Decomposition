@@ -40,6 +40,21 @@ class BasicRNN(nn.Module):  # without state smooth
 
         outputs = torch.stack(outputs, 1).squeeze(2)  # 不理解
         return outputs[0]
+    
+    def self_forecast(self, x, step):
+        x = x.unsqueeze(0)  # non-batch
+        hidden = self.init_hidden_state()
+        outputs = []
+        for input_t in x.split(1, dim=1):
+            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
+            output = self.fc3(hidden)
+        outputs += [output]
+        for i in range(step - 1):  # if we should predict the future
+            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
+            output = self.fc3(hidden)
+            outputs += [output]
+        outputs = torch.stack(outputs, 1).squeeze(2)
+        return outputs[0]
 
 
 class RNNwss(nn.Module):  # with state smooth
