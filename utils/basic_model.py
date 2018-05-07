@@ -48,9 +48,9 @@ class BasicRNN(nn.Module):  # without state smooth
         for input_t in x.split(1, dim=1):
             hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
             output = self.fc3(hidden)
-        outputs += [output]
+            outputs += [output]
         for i in range(step - 1):  # if we should predict the future
-            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
+            hidden = F.tanh(self.fc1(output) + self.fc2(hidden))
             output = self.fc3(hidden)
             outputs += [output]
         outputs = torch.stack(outputs, 1).squeeze(2)

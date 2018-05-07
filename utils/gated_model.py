@@ -16,19 +16,27 @@ class BinaryFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        input = ctx.saved_variables[0]
-        grad_input = to_gpu(torch.ones_like(input.data))
-        return grad_input
+        x = ctx.saved_variables[0]
+        x_grad = None
 
-class GatedRNN(nn.Module):
+        if ctx.needs_input_grad[0]:
+            x_grad = grad_output.clone()
+
+        return x_grad
+
+
+class StackGatedRNN(nn.Module):
     def __init__(self, seq_dim, hidden_size):
-        super(GatedRNN, self).__init__()
+        super(StackGatedRNN, self).__init__()
         self.seq_dim = seq_dim
         self.hidden_size = hidden_size
-        self.fc1 = nn.Linear(seq_dim, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, seq_dim)
-        self.gate = nn.Linear(seq_dim, 1)
+        self.l1_fc1 = nn.Linear(seq_dim, hidden_size)
+        self.l1_fc2 = nn.Linear(hidden_size, hidden_size)
+        self.l2_fc1 = nn.Linear(hidden_size, hidden_size)
+        self.l2_fc2 = nn.Linear(hidden_size, hidden_size)
+        self.l1_h2o = nn.Linear(hidden_size, seq_dim)
+        self.l2_h2o = nn.Linear(hidden_size, seq_dim)
+        self.h2g = nn.Linear(hidden_size * 2, hidden_size)
         self.binary = BinaryFunction.apply
 
     def init_hidden_state(self):
@@ -37,59 +45,71 @@ class GatedRNN(nn.Module):
     def init_gate_state(self):
         return to_gpu(torch.ones(1, 1))
 
-    def get_deviation(self, y, y_pred):
-        assert y.dim() == y_pred.dim()
-        dev = torch.abs(y - y_pred)
-        return dev
-
-    def get_gate_state(self, y, y_pred):
-        dev = self.get_deviation(y, y_pred)
-        _u = F.sigmoid(self.gate(dev)).squeeze(0)
+    def get_gate_state(self, hidden1, hidden2):
+        s = torch.cat((hidden1, hidden2), 1)
+        _u = F.sigmoid(self.h2g(s)).squeeze(0)
         u = self.binary(_u)
+        # u = _u
         return u
 
     def forward(self, x):
-        hidden = self.init_hidden_state()
+        l1_hidden = self.init_hidden_state()
+        l2_hidden = self.init_hidden_state()
         u = self.init_gate_state()
         outputs = []
-        xlist = x.split(1, dim=1)
-        l = len(xlist)
-        idx = 0
-        for input_t in xlist:
-            hidden = u * F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden)) + (1 - u) * hidden
-            output = self.fc3(hidden)
+        for input_t in x.split(1, dim=1):
+            l1_hidden = F.tanh(self.l1_fc1(input_t.squeeze(1)) + self.l1_fc2(l1_hidden))
+            l2_hidden = u * F.tanh(self.l2_fc1(l1_hidden) + self.l2_fc2(l2_hidden)) + (1 - u) * l2_hidden
+            output = self.l1_h2o(l1_hidden) + self.l2_h2o(l2_hidden)
+            u = self.get_gate_state(l1_hidden, l2_hidden)
             outputs += [output]
 
-            idx += 1
-            if idx < l:
-                u = self.get_gate_state(xlist[idx].squeeze(1), output)
-            
-        outputs = torch.stack(outputs, 1).squeeze(2)  # 不理解
+        outputs = torch.stack(outputs, 1).squeeze(2)
         return outputs
 
     def forecast(self, x):
         x = x.unsqueeze(0)  # non-batch
-        hidden = self.init_hidden_state()
+        l1_hidden = self.init_hidden_state()
+        l2_hidden = self.init_hidden_state()
+        u = self.init_gate_state()
         outputs = []
+        outputs1 = []
+        outputs2 = []
         for input_t in x.split(1, dim=1):
-            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
-            output = self.fc3(hidden)
-            outputs += [output]
+            l1_hidden = F.tanh(self.l1_fc1(input_t.squeeze(1)) + self.l1_fc2(l1_hidden))
+            l2_hidden = u * F.tanh(self.l2_fc1(l1_hidden) + self.l2_fc2(l2_hidden)) + (1 - u) * l2_hidden
+            output1 = self.l1_h2o(l1_hidden)
+            output2 = self.l2_h2o(l2_hidden)
+            output = output1 + output2
 
-        outputs = torch.stack(outputs, 1).squeeze(2)  # 不理解
-        return outputs[0]
+            u = self.get_gate_state(l1_hidden, l2_hidden)
+            outputs += [output]
+            outputs1 += [output1]
+            outputs2 += [output2]
+        outputs = torch.stack(outputs, 1).squeeze(2)
+        outputs1 = torch.stack(outputs1, 1).squeeze(2)
+        outputs2 = torch.stack(outputs2, 1).squeeze(2)
+        return outputs[0], outputs1[0], outputs2[0]
 
     def self_forecast(self, x, step):
         x = x.unsqueeze(0)  # non-batch
-        hidden = self.init_hidden_state()
+        l1_hidden = self.init_hidden_state()
+        l2_hidden = self.init_hidden_state()
+        u = self.init_gate_state()
         outputs = []
         for input_t in x.split(1, dim=1):
-            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
-            output = self.fc3(hidden)
-        outputs += [output]
+            l1_hidden = F.tanh(self.l1_fc1(input_t.squeeze(1)) + self.l1_fc2(l1_hidden))
+            l2_hidden = F.tanh(self.l2_fc1(l1_hidden) + self.l2_fc2(l2_hidden))
+            output = self.l1_h2o(l1_hidden) + self.l2_h2o(l2_hidden)
+            u = self.get_gate_state(l1_hidden, l2_hidden)
+            outputs += [output]
         for i in range(step - 1):  # if we should predict the future
-            hidden = F.tanh(self.fc1(input_t.squeeze(1)) + self.fc2(hidden))
-            output = self.fc3(hidden)
+            l1_hidden = F.tanh(self.l1_fc1(output) + self.l1_fc2(l1_hidden))
+            l2_hidden = u * F.tanh(self.l2_fc1(l1_hidden) + self.l2_fc2(l2_hidden)) + (1 - u) * l2_hidden
+            output = self.l1_h2o(l1_hidden) + self.l2_h2o(l2_hidden)
+            u = self.get_gate_state(l1_hidden, l2_hidden)
             outputs += [output]
         outputs = torch.stack(outputs, 1).squeeze(2)
         return outputs[0]
+
+
