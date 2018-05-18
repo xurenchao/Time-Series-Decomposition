@@ -11,7 +11,10 @@ from torch.utils.data import Dataset, DataLoader
 DIR = os.path.dirname(__file__)
 
 SPOT = pd.read_csv(os.path.join(DIR, 'simple_spot.csv'),
-                   index_col='datetime', parse_dates=True).iloc[:, 0]
+                index_col='datetime', parse_dates=True).iloc[:, 0]
+TOTAL_STD = 22.732
+TOTAL_MEAN = 38.99
+
 # HOLIDAY = pd.read_csv(os.path.join(DIR, 'simple_holiday.csv'),
 #                       index_col='date', parse_dates=True).iloc[:, 0]
 
@@ -24,17 +27,11 @@ hour_std = cared.groupby(cared.index.hour).std()
 # SPOT = (SPOT - SPOT.index.map(lambda x: hour_mean[x.hour])) / 22.38
 
 
-TOTAL_STD = 22.38
-TOTAL_MEAN = 43.092
-
-
 def normalize(x):
     return (x - TOTAL_MEAN) / TOTAL_STD
 
-
 def reduce_hour_mean():
     return (SPOT - SPOT.index.map(lambda x: hour_mean[x.hour])) / TOTAL_STD
-
 
 def to_stardard(x):
     return x * TOTAL_STD + hour_mean.values  # broadcast
@@ -228,7 +225,7 @@ class DailyDataset(Dataset):
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
         return loader
 
-
+    
 class STRDataset(Dataset):
     def __init__(self, end_date):
         pass
