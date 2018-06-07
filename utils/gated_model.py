@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable, Function
+from torch.autograd import Function
 import torch.optim as optim
 from tool import to_gpu
 import numpy as np
@@ -26,16 +26,15 @@ class BinaryFunction(Function):
 
 
 class GatedRNN(nn.Module):
-    def __init__(self, seq_dim, hidden_size, hard_gate=False):
+    def __init__(self, input_dim, output_dim, hidden_size, hard_gate=False):
         super(GatedRNN, self).__init__()
-        self.seq_dim = seq_dim
         self.hidden_size = hidden_size
-        self.l1_W = nn.Linear(seq_dim, hidden_size)
+        self.l1_W = nn.Linear(input_dim, hidden_size)
         self.l1_U = nn.Linear(hidden_size, hidden_size)
         self.l2_W = nn.Linear(hidden_size, hidden_size)
         self.l2_U = nn.Linear(hidden_size, hidden_size)
-        self.out1 = nn.Linear(hidden_size, seq_dim)
-        self.out2 = nn.Linear(hidden_size, seq_dim)
+        self.out1 = nn.Linear(hidden_size, output_dim)
+        self.out2 = nn.Linear(hidden_size, output_dim)
         self.gate = nn.Linear(hidden_size * 2, hidden_size)
         self.binary = BinaryFunction.apply
         self.hard_gate = hard_gate
@@ -111,19 +110,18 @@ class GatedRNN(nn.Module):
         return outputs[0]
 
 class StackGatedRNN(nn.Module):
-    def __init__(self, seq_dim, hidden_size, hard_gate=False):
+    def __init__(self, input_dim, output_dim, hidden_size, hard_gate=False):
         super(StackGatedRNN, self).__init__()
-        self.seq_dim = seq_dim
         self.hidden_size = hidden_size
-        self.l1_W = nn.Linear(seq_dim, hidden_size)
+        self.l1_W = nn.Linear(input_dim, hidden_size)
         self.l1_U = nn.Linear(hidden_size, hidden_size)
         self.l2_W = nn.Linear(hidden_size, hidden_size)
         self.l2_U = nn.Linear(hidden_size, hidden_size)
         self.l3_W = nn.Linear(hidden_size, hidden_size)
         self.l3_U = nn.Linear(hidden_size, hidden_size)
-        self.out1 = nn.Linear(hidden_size, seq_dim)
-        self.out2 = nn.Linear(hidden_size, seq_dim)
-        self.out3 = nn.Linear(hidden_size, seq_dim)
+        self.out1 = nn.Linear(hidden_size, output_dim)
+        self.out2 = nn.Linear(hidden_size, output_dim)
+        self.out3 = nn.Linear(hidden_size, output_dim)
         self.gate1 = nn.Linear(hidden_size * 2, hidden_size)
         self.gate2 = nn.Linear(hidden_size * 2, hidden_size)
         self.binary = BinaryFunction.apply
@@ -223,12 +221,11 @@ class StackGatedRNN(nn.Module):
         return outputs[0]
 
 class ResRNN(nn.Module):
-    def __init__(self, seq_dim, hidden_size, hard_gate=False):
+    def __init__(self, input_dim, output_dim, hidden_size, hard_gate=False):
         super(ResRNN, self).__init__()
-        self.seq_dim = seq_dim
         self.hidden_size = hidden_size
 
-        self.l1_W = nn.Linear(seq_dim, hidden_size)
+        self.l1_W = nn.Linear(input_dim, hidden_size)
         self.l1_U = nn.Linear(hidden_size, hidden_size)
         self.l2_W = nn.Linear(hidden_size, hidden_size)
         self.l2_U = nn.Linear(hidden_size, hidden_size)
@@ -239,8 +236,8 @@ class ResRNN(nn.Module):
         self.gate1 = nn.Linear(hidden_size * 2, hidden_size)
         self.gate2 = nn.Linear(hidden_size * 3, hidden_size)
 
-        self.out1 = nn.Linear(hidden_size, seq_dim)
-        self.out2 = nn.Linear(hidden_size, seq_dim)
+        self.out1 = nn.Linear(hidden_size, output_dim)
+        self.out2 = nn.Linear(hidden_size, output_dim)
 
         self.hard_gate = hard_gate
         self.binary = BinaryFunction.apply
@@ -263,7 +260,7 @@ class ResRNN(nn.Module):
             z1 = F.sigmoid(self.gate1(torch.cat((hidden1, hidden2), 1))).squeeze(0)
             z2 = F.sigmoid(self.gate2(torch.cat((hidden1, hidden2, hidden3), 1))).squeeze(0)
             if self.hard_gate:
-                z1 = self.binary(z1)
+                # z1 = self.binary(z1)
                 z2 = self.binary(z2)
             z1 = z1 * z2
 
@@ -288,7 +285,7 @@ class ResRNN(nn.Module):
             z1 = F.sigmoid(self.gate1(torch.cat((hidden1, hidden2), 1))).squeeze(0)
             z2 = F.sigmoid(self.gate2(torch.cat((hidden1, hidden2, hidden3), 1))).squeeze(0)
             if self.hard_gate:
-                z1 = self.binary(z1)
+                # z1 = self.binary(z1)
                 z2 = self.binary(z2)
             z1 = z1 * z2
 
@@ -321,7 +318,7 @@ class ResRNN(nn.Module):
     #             z2 = self.binary(z2)
     #         z2 = z1 * z2
 
-    #         output = self.out1(hidden2) + self.out2(hidden3)
+    #         output = self.out1(hidden2)) + F.tanh(self.out2(hidden3)
     #         outputs += [output]
     #     for i in range(step - 1):  # if we should predict the future
     #         hidden1 = F.tanh(self.l1_W(output) + self.l1_U(hidden1))
@@ -335,19 +332,18 @@ class ResRNN(nn.Module):
     #             z2 = self.binary(z2)
     #         z2 = z1 * z2
 
-    #         output = self.out1(hidden2) + self.out2(hidden3)
+    #         output = self.out1(hidden2)) + F.tanh(self.out2(hidden3)
     #         outputs += [output]
     #     outputs = torch.stack(outputs, 1).squeeze(2)
     #     return outputs[0]
 
 
 class StackResRNN(nn.Module):
-    def __init__(self, seq_dim, hidden_size, hard_gate=False):
+    def __init__(self, input_dim, output_dim, hidden_size, hard_gate=False):
         super(StackResRNN, self).__init__()
-        self.seq_dim = seq_dim
         self.hidden_size = hidden_size
 
-        self.l1_W = nn.Linear(seq_dim, hidden_size)
+        self.l1_W = nn.Linear(input_dim, hidden_size)
         self.l1_U = nn.Linear(hidden_size, hidden_size)
         self.l2_W = nn.Linear(hidden_size, hidden_size)
         self.l2_U = nn.Linear(hidden_size, hidden_size)
@@ -361,8 +357,8 @@ class StackResRNN(nn.Module):
         self.gate2 = nn.Linear(hidden_size * 2, hidden_size)
         self.gate3 = nn.Linear(hidden_size * 3, hidden_size)
 
-        self.l3_h2o = nn.Linear(hidden_size, seq_dim)
-        self.l4_h2o = nn.Linear(hidden_size, seq_dim)
+        self.l3_h2o = nn.Linear(hidden_size, output_dim)
+        self.l4_h2o = nn.Linear(hidden_size, output_dim)
 
         self.hard_gate = hard_gate
         self.binary = BinaryFunction.apply
