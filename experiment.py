@@ -12,9 +12,9 @@ import torch.optim as optim
 
 from dataset.spot import PeriodDataset, get_loader, TOTAL_STD
 from utils.tool import to_gpu
-from utils.gated_model import GatedRNN as Model
+# from utils.gated_model import GatedRNN as Model
 # from utils.gated_model import StackGatedRNN as Model
-# from utils.gated_model import ResRNN as Model
+from utils.gated_model import ResRNN as Model
 # from utils.gated_model import StackResRNN as Model
 
 
@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument('--output_dim', default=24, type=int,)
     parser.add_argument('--hidden_size', default=128, type=int,)
     parser.add_argument('--hard_gate', default=1, type=bool,)
-    parser.add_argument('--flag', default='gated_1', type=str,)
+    parser.add_argument('--flag', default='resrnn_test', type=str,)
     args = parser.parse_args()
     return args
 

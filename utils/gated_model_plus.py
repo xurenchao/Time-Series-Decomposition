@@ -52,10 +52,24 @@ class GatedRNN(nn.Module):
             u = self.binary(u)
         return u
 
+
+    # def forward(self, x):
+    #     b, d, h = x.shape
+    #     hiddens = self.drnn_run(x.reshape(b, 1, d * h))
+    #     output = F.tanh(self.h2o1(hiddens[0])) + \
+    #         F.tanh(self.h2o2(hiddens[2])) + F.tanh(self.h2o2(hiddens[-1]))
+
+    #     return output[0]
+
     def forward(self, x):
         hidden1 = hidden2 = self.init_hidden_state()
         u = self.init_gate_state()
         outputs = []
+        hidden1 = F.tanh(self.l1_W(x.squeeze(1)) + self.l1_U(hidden1))
+        hidden2 = u * F.tanh(self.l2_W(hidden1) + self.l2_U(hidden2)) + (1 - u) * hidden2
+        output = self.out1(hidden1) + self.out2(hidden2)
+        u = self.get_gate_state(hidden1, hidden2)
+        return output
         for input_t in x.split(1, dim=1):
             hidden1 = F.tanh(self.l1_W(input_t.squeeze(1)) + self.l1_U(hidden1))
             hidden2 = u * F.tanh(self.l2_W(hidden1) + self.l2_U(hidden2)) + (1 - u) * hidden2

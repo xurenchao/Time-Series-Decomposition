@@ -1,0 +1,20 @@
+--- /home/xurenchao/work/rnn/Time-Series-Decomposition/utils/drnn.py
++++ /home/xurenchao/work/rnn/Time-Series-Decomposition/utils/drnn.py
+@@ -34,7 +34,7 @@
+     def forward(self, x):
+         b, d, h = x.shape
+         hiddens = self.drnn_run(x.reshape(b, 1, d * h))
+-        output = F.tanh(self.h2o1(hiddens[1])) + F.tanh(self.h2o2(hiddens[-1]))# + F.tanh(self.h2o2(hiddens[-1]))
++        output = F.tanh(self.h2o1(hiddens[0])) + F.tanh(self.h2o2(hiddens[-1]))# + F.tanh(self.h2o2(hiddens[-1]))
+ 
+ 
+         return output[0]
+@@ -48,7 +48,7 @@
+         outputs3 = []
+         for i in range(d - self.W + 1):
+             hiddens = self.drnn_run(x[i:i+self.W,:].reshape(1,1,self.W * 24))
+-            output1 = F.tanh(self.h2o1(hiddens[1]))
++            output1 = F.tanh(self.h2o1(hiddens[0]))
+             output2 = F.tanh(self.h2o2(hiddens[-1]))
+             # output3 = F.tanh(self.h2o3(hiddens[-1]))
+             outputs += [output1 + output2]
