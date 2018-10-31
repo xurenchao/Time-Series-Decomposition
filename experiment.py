@@ -10,12 +10,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from dataset.spot import PeriodDataset, get_loader, TOTAL_STD
-from utils.tool import to_gpu
-# from utils.gated_model import GatedRNN as Model
-# from utils.gated_model import StackGatedRNN as Model
+from dataset.spot import DailyDataset, PeriodDataset, get_loader, TOTAL_STD
+from utils.tool import clip_grads, to_gpu
 from utils.gated_model import ResRNN as Model
-# from utils.gated_model import StackResRNN as Model
 
 
 def get_args():
@@ -24,12 +21,15 @@ def get_args():
     parser.add_argument('--batch_size', default=64, type=int,)
     parser.add_argument('--N', default=2000, type=int,)
     parser.add_argument('--W', default=14, type=int,)
-    parser.add_argument('--P', default=7, type=int,)
-    parser.add_argument('--input_dim', default=168, type=int,)
+    parser.add_argument('--P', default=1, type=int,)
+    parser.add_argument('--input_dim', default=24, type=int,)
     parser.add_argument('--output_dim', default=24, type=int,)
-    parser.add_argument('--hidden_size', default=128, type=int,)
+    parser.add_argument('--hidden_size', default=64, type=int,)
     parser.add_argument('--hard_gate', default=1, type=bool,)
-    parser.add_argument('--flag', default='resrnn_test', type=str,)
+    # parser.add_argument('--week_penalty', default=3e-5, type=float,)
+    # parser.add_argument('--day_penalty', default=3e-4, type=float,)
+    # parser.add_argument('--smooth_penalty', default=0.001, type=float,)
+    parser.add_argument('--flag', default='res_rnn_2', type=str,)
     args = parser.parse_args()
     return args
 
@@ -45,7 +45,8 @@ if __name__ == '__main__':
         writer_path = list(writer.all_writers.keys())[0]
     else:
         # e.g. 'runs/gru/hidden64'
-        writer_path = os.path.join('runs/p7', args.flag)
+        # writer_path = os.path.join('runs/seasonality', args.flag)
+        writer_path = os.path.join('runs/test', args.flag)
         writer = SummaryWriter(log_dir=writer_path)
 
     with open(os.path.join(writer_path, 'config.json'), 'w') as f:
@@ -54,20 +55,30 @@ if __name__ == '__main__':
     dataset = PeriodDataset(N=args.N, W=args.W, P=args.P)
     loader = get_loader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-    TEST_LENGTH = 243
+    TEST_LENGTH = 182
 
-    trainX, trainY = loader.dataset.get_io('2012-01-01', '2015-12-31')
-    testX, testY = loader.dataset.get_io('2012-01-01', '2016-08-30')
+    trainX, trainY = loader.dataset.get_io('2011-06-30', '2015-12-31')
+    testX, testY = loader.dataset.get_io('2011-06-30', '2016-06-30')
+
+    # add trend
+    add_trend=0
+    if add_trend:
+        a=[x for x in range(0, 24*182)]
+        b=torch.zeros_like(testX)
+        b[-182:,:]=torch.Tensor(a).reshape(182,24)*0.0002
+        c=[x for x in range(1, 24*182+1)]
+        d=torch.Tensor(c).reshape(182,24)*0.0002
+    else:
+        b=d=0
+
     with torch.no_grad():
         train_period_input = to_gpu(trainX)
         train_period_output = to_gpu(trainY) * TOTAL_STD
-        test_period_input = to_gpu(testX)
-        # add one more day
-        self_test_input = test_period_input[:train_period_input.size()[0] + 1]
-        test_period_output = to_gpu(testY[-TEST_LENGTH:]) * TOTAL_STD
+        test_period_input = to_gpu(testX+b)
+        test_period_output = to_gpu(testY[-TEST_LENGTH:]+d) * TOTAL_STD
 
-    model = to_gpu(Model(input_dim=args.input_dim, output_dim=args.output_dim, hidden_size=args.hidden_size, hard_gate=args.hard_gate))
-
+    model = to_gpu(Model(input_dim=args.input_dim, output_dim=args.output_dim,
+                         hidden_size=args.hidden_size, hard_gate=args.hard_gate))
 
     criterion = nn.MSELoss()
     metric = nn.L1Loss()
@@ -85,16 +96,10 @@ if __name__ == '__main__':
         test_mse = criterion(test_period_forecast, test_period_output)**.5
         test_mae = metric(test_period_forecast, test_period_output)
 
-        # self_test_forecast = model.self_forecast(self_test_input, step=TEST_LENGTH)[-TEST_LENGTH:] * TOTAL_STD
-        # self_test_mse = criterion(self_test_forecast, test_period_output)**.5
-        # self_test_mae = metric(self_test_forecast, test_period_output)
-
         writer.add_scalar('train_mse', train_mse.data, global_step=epoch)
         writer.add_scalar('train_mae', train_mae.data, global_step=epoch)
         writer.add_scalar('test_mse', test_mse.data, global_step=epoch)
         writer.add_scalar('test_mae', test_mae.data, global_step=epoch)
-        # writer.add_scalar('self_test_mse', self_test_mse.data, global_step=epoch)
-        # writer.add_scalar('self_test_mae', self_test_mae.data, global_step=epoch)
 
         for _, (x, y, item) in enumerate(loader):
             x = to_gpu(x)
@@ -103,11 +108,13 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             out = model(x)
-            # with torch.no_grad():
-            #     y_mean = to_gpu(torch.ones_like(out[1]) * (out[1].mean()))
+            # out, week_loss, day_loss, smooth_loss = model(x)
 
-            loss = criterion(out, y)  # + 0.1*regularization(out[1], y_mean)
+            loss = criterion(out, y) #+ args.week_penalty * week_loss + args.day_penalty * day_loss + args.smooth_penalty * smooth_loss
             writer.add_scalar('train_loss', loss.data, global_step=global_step)
+            # writer.add_scalar('week_loss', week_loss.data, global_step=global_step)
+            # writer.add_scalar('day_loss', day_loss.data, global_step=global_step)
+            # writer.add_scalar('smooth_loss', smooth_loss.data, global_step=global_step)
             loss.backward(retain_graph=True)
             # clip_grads(model)
             optimizer.step()

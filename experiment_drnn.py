@@ -10,9 +10,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from dataset.spot import DailyDataset, get_loader, TOTAL_STD
-from utils.tool import to_gpu
-from utils.drnn import ResDRNN as Model
+from dataset.spot import PeriodDataset, get_loader, TOTAL_STD
+from utils.tool import clip_grads, to_gpu
+from utils.drnn import DilatedRNN as Model
 
 
 def get_args():
@@ -21,13 +21,16 @@ def get_args():
     parser.add_argument('--batch_size', default=64, type=int,)
     parser.add_argument('--N', default=2000, type=int,)
     parser.add_argument('--W', default=14, type=int,)
-    parser.add_argument('--n_input', default=14*24, type=int,)
+    parser.add_argument('--P', default=1, type=int,)
+    parser.add_argument('--n_input', default=24, type=int,)
     parser.add_argument('--n_output', default=24, type=int,)
-    parser.add_argument('--n_hidden', default=256, type=int,)
-    parser.add_argument('--n_layers', default=4, type=int,)
-    parser.add_argument('--dilation', default=[1,2,7,1], type=int,)
+    parser.add_argument('--n_hidden', default=64, type=int,)
+    parser.add_argument('--dilations', default=[1,4,7], type=int,)
     parser.add_argument('--cell_type', default='GRU',type=str,)
-    parser.add_argument('--flag', default='resdrnn_test', type=str,)
+    # parser.add_argument('--week_penalty', default=3e-5, type=float,)
+    # parser.add_argument('--day_penalty', default=3e-4, type=float,)
+    parser.add_argument('--smooth_penalty', default=0.0001, type=float,)
+    parser.add_argument('--flag', default='drnn_4', type=str,)
     args = parser.parse_args()
     return args
 
@@ -43,20 +46,20 @@ if __name__ == '__main__':
         writer_path = list(writer.all_writers.keys())[0]
     else:
         # e.g. 'runs/gru/hidden64'
-        writer_path = os.path.join('runs/dilated', args.flag)
+        writer_path = os.path.join('runs/test', args.flag)
         writer = SummaryWriter(log_dir=writer_path)
 
     with open(os.path.join(writer_path, 'config.json'), 'w') as f:
         f.write(json.dumps(vars(args), indent=4))
 
-    dataset = DailyDataset(N=args.N, W=args.W)
+    dataset = PeriodDataset(N=args.N, W=args.W, P=args.P)
     loader = get_loader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     # loader = DailyDataset.get_loader(batch_size=args.batch_size, N=args.N, W=args.W)
 
-    TEST_LENGTH = 243
+    TEST_LENGTH = 182
 
     trainX, trainY = dataset.get_io('2012-01-01', '2015-12-31')
-    testX, testY = dataset.get_io('2012-01-01', '2016-08-30')
+    testX, testY = dataset.get_io('2012-01-01', '2016-06-30')
     # print(trainX.shape)
     with torch.no_grad():
         train_period_input = to_gpu(trainX)
@@ -68,8 +71,7 @@ if __name__ == '__main__':
 
     model = to_gpu(Model(n_input=args.n_input,
                          n_hidden=args.n_hidden,
-                         dilation=args.dilation,
-                        #  n_layers = args.n_layers,
+                         dilations = args.dilations,
                          n_output=args.n_output,
                          cell_type=args.cell_type,
                          ))
@@ -91,16 +93,10 @@ if __name__ == '__main__':
         test_mse = criterion(test_period_forecast, test_period_output)**.5
         test_mae = metric(test_period_forecast, test_period_output)
 
-        # self_test_forecast = model.self_forecast(self_test_input, step=TEST_LENGTH)[-TEST_LENGTH:] * TOTAL_STD
-        # self_test_mse = criterion(self_test_forecast, test_period_output)**.5
-        # self_test_mae = metric(self_test_forecast, test_period_output)
-
         writer.add_scalar('train_mse', train_mse.data, global_step=epoch)
         writer.add_scalar('train_mae', train_mae.data, global_step=epoch)
         writer.add_scalar('test_mse', test_mse.data, global_step=epoch)
         writer.add_scalar('test_mae', test_mae.data, global_step=epoch)
-        # writer.add_scalar('self_test_mse', self_test_mse.data, global_step=epoch)
-        # writer.add_scalar('self_test_mae', self_test_mae.data, global_step=epoch)
 
         for _, (x, y, item) in enumerate(loader):
             x = to_gpu(x)
@@ -109,16 +105,13 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
 
-            out = model(x)
-            # print(ins.shape)
-            # print(out[-1].shape, out[-2].shape, out[-3].shape)
-            # with torch.no_grad():
-            #     y_mean = to_gpu(torch.ones_like(out[1]) * (out[1].mean()))
+            out, smooth_loss = model(x)
 
-            loss = criterion(out, y)  # + 0.1*regularization(out[1], y_mean)
+            loss = criterion(out, y) + args.smooth_penalty * smooth_loss
             writer.add_scalar('train_loss', loss.data, global_step=global_step)
+            writer.add_scalar('smooth_loss', smooth_loss.data, global_step=global_step)
             loss.backward(retain_graph=True)
-            # clip_grads(model)
+            clip_grads(model)
             optimizer.step()
             global_step += 1
     
