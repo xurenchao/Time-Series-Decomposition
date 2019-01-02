@@ -10,17 +10,16 @@ from torch.utils.data import Dataset, DataLoader
 
 DIR = os.path.dirname(__file__)
 
-SPOT = pd.read_csv(os.path.join(DIR, 'data/simple_spot.csv'),
+SPOT = pd.read_csv(os.path.join(DIR, 'data/spot_price.csv'),
                    index_col='datetime', parse_dates=True).iloc[:, 0]
 
-DAY = pd.read_csv(os.path.join(DIR, 'seasonal/day.csv'),
+SEASONAL = pd.read_csv(os.path.join(DIR, 'seasonal.csv'),
                    index_col='datetime', parse_dates=True) # no mean & std
 
-WEEK = pd.read_csv(os.path.join(DIR, 'seasonal/week.csv'),
-                   index_col='datetime', parse_dates=True) # no mean & std
-
-TOTAL_STD = 22.732
-TOTAL_MEAN = 38.99
+# TOTAL_STD = 22.732
+# TOTAL_MEAN = 38.99
+TOTAL_STD = 22.38
+TOTAL_MEAN = 43.092
 
 # HOLIDAY = pd.read_csv(os.path.join(DIR, 'simple_holiday.csv'),
 #                       index_col='date', parse_dates=True).iloc[:, 0]
@@ -168,11 +167,11 @@ class DailyDataset(Dataset):
     TODO: clean the dummy ops.
     '''
 
-    def __init__(self, end_date='2015-12-31', N=1200, W=14, USE_DAY=False, USE_WEEK=False):
+    def __init__(self, end_date='2015-12-31', N=1200, W=14, seasonal=False):
         self.W = W
-        self.USE_DAY = USE_DAY
-        self.USE_WEEK = USE_WEEK
-        self.spot = get_daily_spot(reduce_hour_mean())
+        self.seasonal = seasonal
+        self.spot = get_daily_spot(normalize(SPOT))
+        # self.spot = get_daily_spot(reduce_hour_mean())
         # self.spot = get_daily_spot(SPOT.diff(24))
 
 
@@ -204,29 +203,15 @@ class DailyDataset(Dataset):
     def step_size(self):
         return len(self.dates)  # N + W
 
-    # @property
-    # def training_data(self):
-    #     return self.get_io(self.dates[0], self.dates[-1])
-
-    # @property
-    # def testing_data(self):
-    #     '2016-01-01'
-    #     '2017-06-30'
-    #     pass
-
     def _sliding_window(self, date):
         _sliding = self.spot.loc[pd.to_datetime(date) - Day(self.W):
                                  pd.to_datetime(date)].values
 
         y = _sliding[-self.W:]
-        if self.USE_DAY:
-            d_sliding = DAY.loc[pd.to_datetime(date) - Day(self.W):
+        if self.seasonal:
+            s_sliding = SEASONAL.loc[pd.to_datetime(date) - Day(self.W):
                                  pd.to_datetime(date)].values
-            _sliding = np.concatenate((_sliding, d_sliding), axis=-1)
-        if self.USE_WEEK:
-            w_sliding = WEEK.loc[pd.to_datetime(date) - Day(self.W):
-                                 pd.to_datetime(date)].values
-            _sliding = np.concatenate((_sliding, w_sliding), axis=-1)
+            _sliding = np.concatenate((_sliding, s_sliding), axis=-1)
         x = _sliding[:self.W]
 
         return x, y
@@ -237,16 +222,12 @@ class DailyDataset(Dataset):
                                  pd.to_datetime(end_date)].values
 
         o_stream = _sliding[1:]
-        if self.USE_DAY:
-            d_sliding = DAY.loc[pd.to_datetime(start_date) - Day(self.W):
+        if self.seasonal:
+            s_sliding = SEASONAL.loc[pd.to_datetime(start_date) - Day(self.W):
                                  pd.to_datetime(end_date)].values
-            _sliding = np.concatenate((_sliding, d_sliding), axis=-1)
-        if self.USE_WEEK:
-            w_sliding = WEEK.loc[pd.to_datetime(start_date) - Day(self.W):
-                                 pd.to_datetime(end_date)].values
-            _sliding = np.concatenate((_sliding, w_sliding), axis=-1)
+            _sliding = np.concatenate((_sliding, s_sliding), axis=-1)
         i_stream = _sliding[:-1]
-        return _sliding, torch.from_numpy(i_stream).float(), torch.from_numpy(o_stream).float()
+        return torch.from_numpy(i_stream).float(), torch.from_numpy(o_stream).float()
 
     def __getitem__(self, item):
         x = torch.from_numpy(self.X[item]).float()
@@ -256,32 +237,24 @@ class DailyDataset(Dataset):
     def __len__(self):
         return len(self.X)
 
-    # @classmethod
-    # def get_loader(cls, batch_size=64, shuffle=True, *args, **kwargs):
-    #     dataset = cls(*args, **kwargs)
-    #     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
-    #     return loader
-
-
-class PeriodDataset(Dataset):
+class DailyDataset_pi(Dataset):
     '''
     TODO: clean the dummy ops.
     '''
 
-    def __init__(self, end_date='2015-12-31', N=1200, W=14, P=2, USE_DAY=False, USE_WEEK=False):
+    def __init__(self, end_date='2015-12-31', N=1200, W=14, seasonal=False):
         self.W = W
-        self.P = P
-        self.USE_DAY = USE_DAY
-        self.USE_WEEK = USE_WEEK
-        self.spot = get_daily_spot(reduce_hour_mean())
+        self.seasonal = seasonal
+        self.spot = get_daily_spot(normalize(SPOT))
+        # self.spot = get_daily_spot(reduce_hour_mean())
         # self.spot = get_daily_spot(SPOT.diff(24))
+
 
         dt = pd.to_datetime(end_date)
         X = []
         Y = []
         dates = []
-        for i in range(N):
-            # print(dt, i)
+        for _ in range(N):
             x, y = self._sliding_window(dt)
             X.append(x)
             Y.append(y)
@@ -290,7 +263,7 @@ class PeriodDataset(Dataset):
 
         start_date = dates[-1]
 
-        for _ in range(W + P - 1):
+        for _ in range(W):
             dates.append(dt)
             dt -= Day(1)
 
@@ -305,60 +278,30 @@ class PeriodDataset(Dataset):
     def step_size(self):
         return len(self.dates)  # N + W
 
-    # @property
-    # def training_data(self):
-    #     return self.get_io(self.dates[0], self.dates[-1])
-
-    # @property
-    # def testing_data(self):
-    #     '2016-01-01'
-    #     '2017-06-30'
-    #     pass
-
     def _sliding_window(self, date):
-        _sliding = self.spot.loc[pd.to_datetime(date) - Day(self.W + self.P - 1):
+        _sliding = self.spot.loc[pd.to_datetime(date) - Day(self.W):
                                  pd.to_datetime(date)].values
-        
-        y = _sliding[-self.W:]
-        if self.USE_DAY:
-            d_sliding = DAY.loc[pd.to_datetime(date) - Day(self.W + self.P - 1):
-                                 pd.to_datetime(date)].values
-            _sliding = np.concatenate((_sliding, d_sliding), axis=-1)
-        if self.USE_WEEK:
-            w_sliding = WEEK.loc[pd.to_datetime(date) - Day(self.W + self.P - 1):
-                                 pd.to_datetime(date)].values
-            _sliding = np.concatenate((_sliding, w_sliding), axis=-1)
 
-        x = []
-        m = 1 + self.USE_DAY + self.USE_WEEK
-        for i in range(self.W):
-            x += [_sliding[i:i + self.P].reshape(24 * m * self.P)]
-        x = np.array(x)
-        
+        if self.seasonal:
+            s_sliding = SEASONAL.loc[pd.to_datetime(date) - Day(self.W):
+                                 pd.to_datetime(date)].values
+            _sliding = _sliding - s_sliding
+        x = _sliding[:self.W]
+        y = _sliding[-self.W:]
+
         return x, y
 
-    def get_io(self, start_date, end_date):
-        _sliding = self.spot.loc[pd.to_datetime(start_date) - Day(self.W + self.P - 1):
-                                 pd.to_datetime(end_date)].values
-        o_stream = _sliding[self.P:]
-        if pd.to_datetime(end_date) > pd.to_datetime('2016-06-30'):
-            _sliding = self.spot.loc[pd.to_datetime(start_date) - Day(self.W + self.P - 1):
-                                        pd.to_datetime('2016-06-30')].values
 
-        if self.USE_DAY:
-            d_sliding = DAY.loc[pd.to_datetime(start_date) - Day(self.W + self.P - 1):
+    def get_io(self, start_date, end_date):
+        _sliding = self.spot.loc[pd.to_datetime(start_date) - Day(self.W):
                                  pd.to_datetime(end_date)].values
-            _sliding = np.concatenate((_sliding, d_sliding), axis=-1)
-        if self.USE_WEEK:
-            w_sliding = WEEK.loc[pd.to_datetime(start_date) - Day(self.W + self.P - 1):
-                                 pd.to_datetime(end_date)].values
-            _sliding = np.concatenate((_sliding, w_sliding), axis=-1)
-        i_stream = []
-        m = 1 + self.USE_DAY + self.USE_WEEK
-        for i in range(_sliding.shape[0] - self.P):
-            i_stream += [_sliding[i:i + self.P].reshape(24 * m * self.P)]
-        i_stream = np.array(i_stream)
         
+        if self.seasonal:
+            s_sliding = SEASONAL.loc[pd.to_datetime(start_date) - Day(self.W):
+                                 pd.to_datetime(end_date)].values
+            _sliding = _sliding - s_sliding
+        i_stream = _sliding[:-1]
+        o_stream = _sliding[1:]
         return torch.from_numpy(i_stream).float(), torch.from_numpy(o_stream).float()
 
     def __getitem__(self, item):
@@ -369,6 +312,68 @@ class PeriodDataset(Dataset):
     def __len__(self):
         return len(self.X)
 
+
+class DailyDataset_nn(Dataset):
+    '''
+    NN dataset for electricity price prediction
+    '''
+    def __init__(self, end_date='2015-12-31', N=1200, W=14):
+        self.W = W
+        self.spot = get_daily_spot(normalize(SPOT))
+        # self.spot = get_daily_spot(reduce_hour_mean())
+        # self.spot = get_daily_spot(SPOT.diff(24))
+
+
+        dt = pd.to_datetime(end_date)
+        X = []
+        Y = []
+        dates = []
+        for _ in range(N):
+            x, y = self._sliding_window(dt)
+            X.append(x)
+            Y.append(y)
+            dates.append(dt)
+            dt -= Day(1)
+
+        start_date = dates[-1]
+
+        for _ in range(W):
+            dates.append(dt)
+            dt -= Day(1)
+
+        self.X = np.array(list(reversed(X)))
+        self.Y = np.array(list(reversed(Y)))
+        self.dates = np.array(list(reversed(dates)))
+
+        print("Data build range: [window(%s) - %s, %s]" %
+              (self.dates[0], start_date, self.dates[-1]))
+
+    @property
+    def step_size(self):
+        return len(self.dates)  # N + W
+
+    def _sliding_window(self, date):
+        _sliding = self.spot.loc[pd.to_datetime(date) - Day(self.W):
+                                 pd.to_datetime(date)].values
+        x = _sliding[:self.W]
+        y = _sliding[-1]
+        return x, y
+
+
+    def get_io(self, start_date, end_date):
+        _sliding = self.spot.loc[pd.to_datetime(start_date) - Day(self.W):
+                                 pd.to_datetime(end_date)].values
+        i_stream = _sliding[:-1]
+        o_stream = _sliding[self.W:]
+        return torch.from_numpy(i_stream).float(), torch.from_numpy(o_stream).float()
+
+    def __getitem__(self, item):
+        x = torch.from_numpy(self.X[item]).float()
+        y = torch.from_numpy(self.Y[item]).float().clamp(-2, 5)
+        return x, y, item
+
+    def __len__(self):
+        return len(self.X)
 
 class SpotDataset(Dataset):
 

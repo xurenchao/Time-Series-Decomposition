@@ -10,9 +10,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from dataset.spot import PeriodDataset, get_loader, TOTAL_STD, TOTAL_MEAN
+from dataset.spot import DailyDataset, get_loader, TOTAL_STD, TOTAL_MEAN
 from utils.tool import clip_grads, to_gpu
-from utils.forecast_model import GRU_a as Model
+from utils.forecast_model import GRU as Model
 
 
 def get_args():
@@ -21,13 +21,11 @@ def get_args():
     parser.add_argument('--batch_size', default=64, type=int,)
     parser.add_argument('--N', default=1600, type=int,)
     parser.add_argument('--W', default=14, type=int,)
-    parser.add_argument('--P', default=1, type=int,)
-    parser.add_argument('--n_input', default=24, type=int,)
-    parser.add_argument('--n_hidden', default=64, type=int,)
-    parser.add_argument('--n_output', default=24, type=int,)
-    parser.add_argument('--USE_DAY', default=0, type=bool,)
-    parser.add_argument('--USE_WEEK', default=1, type=bool,)
-    parser.add_argument('--flag', default='gru_a', type=str,)
+    parser.add_argument('--input_dim', default=24, type=int,)
+    parser.add_argument('--hidden_size', default=64, type=int,)
+    parser.add_argument('--output_dim', default=24, type=int,)
+    parser.add_argument('--seasonal', default=0, type=bool,)
+    parser.add_argument('--flag', default='gru', type=str,)
     args = parser.parse_args()
     return args
 
@@ -49,26 +47,28 @@ if __name__ == '__main__':
     with open(os.path.join(writer_path, 'config.json'), 'w') as f:
         f.write(json.dumps(vars(args), indent=4))
 
-    dataset = PeriodDataset(N=args.N, W=args.W, P=args.P, USE_DAY=args.USE_DAY, USE_WEEK=args.USE_WEEK)
+    dataset = DailyDataset(N=args.N, W=args.W, seasonal=args.seasonal)
     loader = get_loader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
     TEST_LENGTH = 182
     SELF_LENGTH = 61
 
-    trainX, trainY = loader.dataset.get_io('2011-07-01', '2015-12-31')
-    testX, testY = loader.dataset.get_io('2011-07-01', '2016-08-30')
+    trainX, trainY = loader.dataset.get_io('2012-01-01', '2015-12-31')
+    testX, testY = loader.dataset.get_io('2012-01-01', '2016-06-30')
+
     print(testX.shape)
     print(testY.shape)
     with torch.no_grad():
         train_period_input = to_gpu(trainX)
         train_period_output = to_gpu(trainY) * TOTAL_STD
         test_period_input = to_gpu(testX)
-        test_period_output = to_gpu(testY[-TEST_LENGTH-SELF_LENGTH:-SELF_LENGTH]) * TOTAL_STD
+        test_period_output = to_gpu(testY[-TEST_LENGTH:]) * TOTAL_STD
+
 
         # self_test_input = test_period_input[:train_period_input.size()[0] + 1]
-        self_test_output = to_gpu(testY[-SELF_LENGTH:]) * TOTAL_STD
+        # self_test_output = to_gpu(testY[-SELF_LENGTH:]) * TOTAL_STD
 
-    model = to_gpu(Model(n_input=args.n_input, n_hidden=args.n_hidden, n_output=args.n_output))
+    model = to_gpu(Model(input_dim=args.input_dim, hidden_size=args.hidden_size, output_dim=args.output_dim))
 
     criterion = nn.MSELoss()
     metric = nn.L1Loss()
@@ -78,26 +78,20 @@ if __name__ == '__main__':
     epochs = args.epochs
     global_step = 0
     for epoch in tqdm(range(epochs)):
-        train_period_forecast = model.forecast(train_period_input, 0) * TOTAL_STD
+        train_period_forecast = model.forecast(train_period_input)[0] * TOTAL_STD
         train_mse = criterion(train_period_forecast, train_period_output)**.5
         train_mae = metric(train_period_forecast, train_period_output)
 
-        test_forecast = model.forecast(test_period_input, step=SELF_LENGTH) * TOTAL_STD
-        test_period_forecast = test_forecast[-TEST_LENGTH-SELF_LENGTH:-SELF_LENGTH]
-        self_period_forecast = test_forecast[-SELF_LENGTH:]
-
+        test_period_forecast = model.forecast(test_period_input)[0][-TEST_LENGTH:] * TOTAL_STD
         test_mse = criterion(test_period_forecast, test_period_output)**.5
         test_mae = metric(test_period_forecast, test_period_output)
 
-        self_test_mse = criterion(self_period_forecast, self_test_output)**.5
-        self_test_mae = metric(self_period_forecast, self_test_output)
+
 
         writer.add_scalar('train_mse', train_mse.data, global_step=epoch)
         writer.add_scalar('train_mae', train_mae.data, global_step=epoch)
         writer.add_scalar('test_mse', test_mse.data, global_step=epoch)
         writer.add_scalar('test_mae', test_mae.data, global_step=epoch)
-        writer.add_scalar('self_test_mse', self_test_mse.data, global_step=epoch)
-        writer.add_scalar('self_test_mae', self_test_mae.data, global_step=epoch)
 
         for _, (x, y, item) in enumerate(loader):
             x = to_gpu(x)
@@ -107,7 +101,7 @@ if __name__ == '__main__':
 
             out = model(x)
 
-            loss = criterion(out, y)  # + 0.1*regularization(out[1], y_mean)
+            loss = criterion(out, y)
             writer.add_scalar('train_loss', loss.data, global_step=global_step)
             loss.backward(retain_graph=True)
             clip_grads(model)
@@ -115,6 +109,6 @@ if __name__ == '__main__':
             global_step += 1
 
         torch.save(model.state_dict(),
-                   os.path.join(writer_path, "snapshots%s.pth" % epoch))
+                   os.path.join(writer_path, "snapshots%s.pth" % (epoch+1)))
 
     writer.export_scalars_to_json(os.path.join(writer_path, "history.json"))
